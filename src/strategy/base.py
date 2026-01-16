@@ -149,14 +149,20 @@ class Strategy(ABC):
         
         if self.require_regime and current_regime:
             # Check if regime allows momentum strategies
+            # For demo/active trading, be less restrictive
             if hasattr(current_regime, "momentum_enabled"):
-                if not current_regime.momentum_enabled:
+                # Only disable if we're in a clear CRISIS mode
+                if (not current_regime.momentum_enabled and 
+                    hasattr(current_regime, "volatility") and
+                    current_regime.volatility.value == "crisis"):
                     logger.debug(
-                        "strategy_disabled_by_regime",
+                        "strategy_disabled_by_crisis",
                         strategy=self.name,
                         regime=current_regime.combined_regime,
                     )
                     return False
+                # Allow strategies even if momentum_enabled is False (for mean reversion)
+                # The individual strategies will check their own requirements
         
         return True
     

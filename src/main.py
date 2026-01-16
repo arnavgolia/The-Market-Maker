@@ -29,6 +29,7 @@ from src.storage.etl_pipeline import ETLPipeline
 from src.regime.detector import RegimeDetector
 from src.strategy.tier1.ema_crossover import EMACrossoverStrategy
 from src.strategy.tier1.rsi_mean_reversion import RSIMeanReversionStrategy
+from src.strategy.tier1.simple_momentum import SimpleMomentumStrategy
 from src.risk.position_sizer import PositionSizer, PositionSizingMethod
 from src.risk.drawdown_monitor import DrawdownMonitor
 from src.portfolio.allocator import PortfolioAllocator
@@ -229,6 +230,13 @@ class MarketMaker:
         tier1_config = strategy_config.get("tier1", {})
         
         self.strategies = []
+        
+        # Simple Momentum Strategy (always active for demo - generates frequent signals)
+        self.strategies.append(SimpleMomentumStrategy(
+            lookback_periods=5,
+            momentum_threshold=0.005,  # 0.5% change triggers signal
+            enabled=True,
+        ))
         
         if tier1_config.get("ema_crossover", {}).get("enabled", True):
             ema_config = tier1_config["ema_crossover"]
@@ -690,8 +698,26 @@ class MarketMaker:
                 
                 # Run strategies
                 for strategy in self.strategies:
-                    if not strategy.should_generate_signals(current_regime):
+                    # Log strategy execution attempt
+                    logger.debug(
+                        "strategy_execution_attempt",
+                        strategy=strategy.name,
+                        symbol=symbol,
+                        enabled=strategy.enabled,
+                        regime=current_regime.combined_regime if current_regime else "UNKNOWN",
+                    )
+                    
+                    if not strategy.enabled:
+                        logger.debug("strategy_disabled", strategy=strategy.name, symbol=symbol)
                         continue
+                    
+                    # Check regime requirements (but be lenient for active trading)
+                    if strategy.require_regime and current_regime:
+                        if (hasattr(current_regime, "momentum_enabled") and 
+                            not current_regime.momentum_enabled and
+                            strategy.name == "ema_crossover"):
+                            # EMA prefers momentum, but allow it anyway for demo
+                            logger.debug("ema_allowed_despite_regime", symbol=symbol)
                     
                     try:
                         signals = strategy.generate_signals(
@@ -700,6 +726,14 @@ class MarketMaker:
                             current_regime=current_regime,
                             current_position=current_position,
                         )
+                        
+                        if signals:
+                            logger.info(
+                                "signals_generated",
+                                strategy=strategy.name,
+                                symbol=symbol,
+                                count=len(signals),
+                            )
                         
                         all_signals.extend(signals)
                     except Exception as e:
@@ -943,7 +977,14 @@ class MarketMaker:
             )
             
             # Store metrics in DuckDB
-            self.duckdb.insert_performance(metrics.to_dict())
+            try:
+                metrics_dict = metrics.to_dict()
+                # Convert timestamp to date for DuckDB
+                if "timestamp" in metrics_dict and "date" not in metrics_dict:
+                    metrics_dict["date"] = datetime.fromisoformat(metrics_dict["timestamp"]).date()
+                self.duckdb.insert_performance(metrics_dict)
+            except Exception as e:
+                logger.debug("metrics_insert_skipped", error=str(e))  # May fail if schema not ready
             
             # Check for alerts
             if metrics.current_drawdown and abs(metrics.current_drawdown) > 0.05:

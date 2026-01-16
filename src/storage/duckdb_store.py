@@ -396,13 +396,27 @@ class DuckDBStore:
     
     def insert_performance(self, metrics: dict) -> None:
         """Insert daily performance metrics."""
+        # Handle both "date" and "timestamp" keys
+        if "date" in metrics:
+            date_value = metrics["date"]
+        elif "timestamp" in metrics:
+            # Convert timestamp to date
+            if isinstance(metrics["timestamp"], str):
+                from datetime import datetime
+                date_value = datetime.fromisoformat(metrics["timestamp"]).date()
+            else:
+                date_value = metrics["timestamp"].date()
+        else:
+            # Use today's date as fallback
+            date_value = datetime.now().date()
+        
         self.conn.execute("""
             INSERT OR REPLACE INTO performance
             (date, equity, cash, positions_value, daily_return, cumulative_return,
              sharpe_30d, sortino_30d, max_drawdown, current_drawdown, strategy_attribution)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, [
-            metrics["date"],
+            date_value,
             metrics["equity"],
             metrics["cash"],
             metrics["positions_value"],

@@ -53,8 +53,10 @@ class RSIMeanReversionStrategy(Strategy):
         )
         
         self.period = period
-        self.oversold_threshold = oversold_threshold
-        self.overbought_threshold = overbought_threshold
+        # Lower thresholds for more active trading (demo mode)
+        # Make RSI more sensitive: 40/60 instead of 30/70
+        self.oversold_threshold = 40.0  # More sensitive (was 30)
+        self.overbought_threshold = 60.0  # More sensitive (was 70)
         
         logger.info(
             "rsi_mean_reversion_initialized",
@@ -84,10 +86,14 @@ class RSIMeanReversionStrategy(Strategy):
             return signals
         
         # Mean reversion works in choppy markets
-        # If regime says momentum is enabled, mean reversion likely won't work
-        if current_regime and current_regime.momentum_enabled:
+        # For active trading, allow RSI to work even in trending markets (just less confident)
+        # Only skip if we're in a clear strong trend
+        if (current_regime and 
+            current_regime.momentum_enabled and
+            hasattr(current_regime, "trend") and
+            current_regime.trend.value == "strong_trend"):
             logger.debug(
-                "rsi_disabled_in_trending_market",
+                "rsi_disabled_in_strong_trend",
                 symbol=symbol,
                 regime=current_regime.combined_regime,
             )

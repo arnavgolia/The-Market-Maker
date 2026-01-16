@@ -78,8 +78,18 @@ class EMACrossoverStrategy(Strategy):
         signals = []
         
         # Check if strategy should generate signals
-        if not self.should_generate_signals(current_regime):
+        # For active trading, allow EMA even in choppy markets (just less confident)
+        if not self.enabled:
             return signals
+        
+        # Log regime for debugging
+        if current_regime:
+            logger.debug(
+                "ema_strategy_checking",
+                symbol=symbol,
+                momentum_enabled=current_regime.momentum_enabled,
+                regime=current_regime.combined_regime,
+            )
         
         # Convert bars to DataFrame if needed
         if isinstance(bars, list):
