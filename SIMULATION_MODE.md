@@ -4,12 +4,14 @@ The Market Maker can now run in **FULL SIMULATION MODE** without any external AP
 
 ## ✅ What Works in Simulation Mode
 
-- **No Alpaca API needed** - Uses mock client
-- **Free market data** - Uses yfinance (no API keys)
+- **No Alpaca API needed** - Uses free data sources
+- **Free market data** - Multiple sources (yfinance, Alpha Vantage, Finnhub)
+- **No personal info required** - Only email for optional API keys
 - **Simulated trading** - PaperBroker handles all trades
 - **Full dashboard** - All features work
 - **Real strategies** - EMA, RSI strategies run normally
 - **Risk management** - All safety features active
+- **Smart fallback** - Automatically uses best available data source
 
 ## 🚀 How to Run
 
@@ -37,11 +39,29 @@ The dashboard at `http://localhost:8080` will show:
 
 ## 🔄 How It Works
 
-1. **Market Data**: Uses yfinance (free, no API keys)
+1. **Market Data**: Uses free data sources with smart fallback:
+   - Primary: yfinance (no API key needed)
+   - Secondary: Alpha Vantage (optional, email only)
+   - Tertiary: Finnhub (optional, email only)
 2. **Trading**: PaperBroker simulates order execution
 3. **Account**: Mock account with $100k starting equity
 4. **Strategies**: Run normally, generate real signals
 5. **Execution**: Simulated fills with realistic slippage
+
+## 📊 Enhanced Data Sources (Optional)
+
+You can enhance the bot with free API keys (email only, no personal info):
+
+```bash
+# Setup free API keys
+python scripts/setup_free_apis.py
+```
+
+This adds:
+- **Alpha Vantage**: Real-time data, 5 calls/min
+- **Finnhub**: Real-time quotes, 60 calls/min
+
+Both are completely free and only require email signup!
 
 ## ⚙️ Configuration
 

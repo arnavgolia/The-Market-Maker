@@ -170,43 +170,25 @@ class MarketMaker:
         simulation_mode = os.environ.get("SIMULATION_MODE", "false").lower() == "true"
         
         if simulation_mode:
-            # Create mock Alpaca client for full simulation
-            class MockAlpacaClient:
-                def __init__(self):
-                    self.equity = 100000.0
-                    self.cash = 100000.0
-                    self.buying_power = 200000.0
-                    
-                def get_account(self):
-                    class MockAccount:
-                        def __init__(self, equity, cash, buying_power):
-                            self.equity = equity
-                            self.cash = cash
-                            self.buying_power = buying_power
-                            self.status = type('Status', (), {'value': 'ACTIVE'})()
-                    return MockAccount(self.equity, self.cash, self.buying_power)
-                
-                def get_clock(self):
-                    class MockClock:
-                        is_open = True
-                        timestamp = datetime.now()
-                        next_open = datetime.now() + timedelta(days=1)
-                        next_close = datetime.now() + timedelta(days=1, hours=6)
-                    return MockClock()
-                
-                def get_positions(self):
-                    return []
-                
-                def get_orders(self, **kwargs):
-                    return []
+            # Use free data client (no personal info required)
+            from src.data.ingestion.free_data_client import FreeDataClient
             
-            self.alpaca = MockAlpacaClient()
+            # Get optional API keys from environment
+            alpha_vantage_key = os.environ.get("ALPHA_VANTAGE_API_KEY")
+            finnhub_key = os.environ.get("FINNHUB_API_KEY")
+            
+            self.alpaca = FreeDataClient(
+                alpha_vantage_key=alpha_vantage_key,
+                finnhub_key=finnhub_key,
+            )
             initial_equity = 100000.0
             self.redis.set_initial_equity(initial_equity)
             logger.info(
                 "simulation_mode_initialized",
                 initial_equity=initial_equity,
-                message="Running in FULL SIMULATION MODE - no API required!",
+                has_alpha_vantage=bool(alpha_vantage_key),
+                has_finnhub=bool(finnhub_key),
+                message="Running in FULL SIMULATION MODE with free data sources!",
             )
         else:
             self.alpaca = AlpacaDataClient(paper=True)
