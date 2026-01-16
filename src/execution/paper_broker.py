@@ -156,7 +156,7 @@ class PaperBroker:
         client_order_id: Optional[str] = None,
     ) -> dict:
         """Submit limit order (for compatibility with Alpaca interface)."""
-        return self.submit_order(
+        result = self.submit_order(
             symbol=symbol,
             side=side,
             qty=qty,
@@ -164,6 +164,10 @@ class PaperBroker:
             limit_price=limit_price,
             current_price=limit_price,
         )
+        # Add order_id for compatibility
+        if "order_id" not in result:
+            result["order_id"] = result.get("order_id", client_order_id or f"paper_{datetime.now().timestamp()}")
+        return result
     
     def submit_market_order(
         self,

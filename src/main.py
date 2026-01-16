@@ -24,6 +24,7 @@ from src.data.ingestion.alpaca_client import AlpacaDataClient
 from src.storage.append_log import AppendOnlyLog, Event, EventType
 from src.storage.duckdb_store import DuckDBStore
 from src.storage.redis_state import RedisStateStore
+from src.storage.append_log import Event, EventType
 from src.storage.etl_pipeline import ETLPipeline
 from src.regime.detector import RegimeDetector
 from src.strategy.tier1.ema_crossover import EMACrossoverStrategy
@@ -314,9 +315,11 @@ class MarketMaker:
             ).get("interval_seconds", 300),
         )
         
-        # Paper broker for simulation
-        if self.dry_run:
-            self.broker = PaperBroker(initial_cash=100000.0)
+        # Paper broker for simulation (always use in simulation mode)
+        simulation_mode = os.environ.get("SIMULATION_MODE", "false").lower() == "true"
+        if self.dry_run or simulation_mode:
+            initial_equity = self.redis.get_initial_equity() or 100000.0
+            self.broker = PaperBroker(initial_cash=initial_equity)
         else:
             self.broker = self.alpaca
         
@@ -452,22 +455,66 @@ class MarketMaker:
     def _sync_positions(self) -> None:
         """Sync positions with broker (broker is TRUTH)."""
         try:
-            positions = self.alpaca.get_positions()
+            # Get positions from broker (works for both Alpaca and PaperBroker)
+            if hasattr(self.broker, 'get_positions'):
+                # PaperBroker or similar
+                positions = self.broker.get_positions()
+                
+                # Get current prices for P&L calculation
+                account = self.broker.get_account()
+                
+                position_data = []
+                for pos in positions:
+                    symbol = pos["symbol"]
+                    qty = pos["qty"]
+                    avg_price = pos["avg_price"]
+                    
+                    # Get current price (try from data client)
+                    current_price = avg_price  # Default
+                    try:
+                        if hasattr(self.alpaca, 'get_latest_quote'):
+                            quote = self.alpaca.get_latest_quote(symbol)
+                            if quote:
+                                current_price = quote
+                    except Exception:
+                        pass
+                    
+                    market_value = qty * current_price
+                    unrealized_pnl = (current_price - avg_price) * qty
+                    
+                    position_data.append({
+                        "symbol": symbol,
+                        "qty": float(qty),
+                        "avg_price": float(avg_price),
+                        "market_value": float(market_value),
+                        "unrealized_pnl": float(unrealized_pnl),
+                        "side": "long" if qty > 0 else "short",
+                    })
+            else:
+                # Alpaca broker
+                positions = self.alpaca.get_positions()
+                
+                position_data = [
+                    {
+                        "symbol": p.symbol,
+                        "qty": float(p.qty),
+                        "avg_price": float(p.avg_entry_price),
+                        "market_value": float(p.market_value),
+                        "unrealized_pnl": float(p.unrealized_pl),
+                        "side": "long" if float(p.qty) > 0 else "short",
+                    }
+                    for p in positions
+                ]
             
-            # Convert to dict format for Redis
-            position_data = [
-                {
-                    "symbol": p.symbol,
-                    "qty": float(p.qty),
-                    "avg_price": float(p.avg_entry_price),
-                    "market_value": float(p.market_value),
-                    "unrealized_pnl": float(p.unrealized_pl),
-                    "side": "long" if float(p.qty) > 0 else "short",
-                }
-                for p in positions
-            ]
-            
-            self.redis.sync_positions(position_data)
+            # Sync to Redis (only if we have positions from broker)
+            # In simulation mode, preserve existing positions if broker has none
+            if position_data or not hasattr(self.broker, 'get_positions'):
+                self.redis.sync_positions(position_data)
+                logger.debug("positions_synced", count=len(position_data))
+            else:
+                # In simulation mode, don't clear positions if broker has none
+                # This allows demo positions to persist
+                logger.debug("positions_sync_skipped", reason="broker_has_no_positions_preserving_existing")
             
         except Exception as e:
             logger.error("position_sync_error", error=str(e))
@@ -557,10 +604,10 @@ class MarketMaker:
             # Get universe from config or default
             universe_config = self.config.get("data", {}).get("tier0", {})
             if universe_config.get("enabled"):
-                # Would use UniverseSelector here
-                symbols = ["SPY"]  # Default for now
+                # Use multiple symbols for more trading activity
+                symbols = ["SPY", "QQQ", "AAPL", "MSFT", "TSLA"]
             else:
-                symbols = ["SPY"]  # Default to SPY for simplicity
+                symbols = ["SPY", "QQQ", "AAPL", "MSFT", "TSLA"]  # Multiple symbols for activity
         
         all_signals = []
         
@@ -575,29 +622,53 @@ class MarketMaker:
                 )
                 
                 if bars.empty:
-                    # Try fetching from Alpaca if DuckDB is empty
+                    # Try fetching from data client (Alpaca or FreeDataClient)
                     try:
-                        alpaca_bars = self.alpaca.get_historical_bars(
-                            symbol=symbol,
-                            start=datetime.now() - timedelta(days=60),
-                            end=datetime.now(),
-                            timeframe="1Day",
-                        )
-                        
-                        if alpaca_bars:
-                            # Convert to DataFrame
-                            import pandas as pd
-                            bars = pd.DataFrame([
-                                {
-                                    "timestamp": b.timestamp,
-                                    "open": b.open,
-                                    "high": b.high,
-                                    "low": b.low,
-                                    "close": b.close,
-                                    "volume": b.volume,
-                                }
-                                for b in alpaca_bars
-                            ])
+                        # Check if it's FreeDataClient or AlpacaDataClient
+                        if hasattr(self.alpaca, 'get_historical_bars'):
+                            data_bars = self.alpaca.get_historical_bars(
+                                symbol=symbol,
+                                start=datetime.now() - timedelta(days=60),
+                                end=datetime.now(),
+                                timeframe="1Day",
+                            )
+                            
+                            if data_bars:
+                                # Convert Bar objects to DataFrame
+                                import pandas as pd
+                                bars = pd.DataFrame([
+                                    {
+                                        "timestamp": b.timestamp,
+                                        "open": b.open,
+                                        "high": b.high,
+                                        "low": b.low,
+                                        "close": b.close,
+                                        "volume": b.volume,
+                                    }
+                                    for b in data_bars
+                                ])
+                                
+                                # Store in DuckDB for future use (skip if error)
+                                try:
+                                    if data_bars:
+                                        # Convert Bar objects to dict format
+                                        bars_dict = [
+                                            {
+                                                "symbol": b.symbol,
+                                                "timestamp": b.timestamp,
+                                                "timeframe": "1Day",
+                                                "tier": b.tier.value if hasattr(b.tier, 'value') else str(b.tier),
+                                                "open": b.open,
+                                                "high": b.high,
+                                                "low": b.low,
+                                                "close": b.close,
+                                                "volume": b.volume,
+                                            }
+                                            for b in data_bars
+                                        ]
+                                        self.duckdb.insert_bars(bars_dict)
+                                except Exception as e:
+                                    logger.debug("duckdb_insert_skipped", error=str(e))
                     except Exception as e:
                         logger.warning("data_fetch_error", symbol=symbol, error=str(e))
                         continue
@@ -608,8 +679,11 @@ class MarketMaker:
                 # Detect regime
                 current_regime = self.regime_detector.detect_regime(bars, symbol=symbol)
                 
-                # Store regime in DuckDB
-                self.duckdb.insert_regime(current_regime.to_dict())
+                # Store regime in DuckDB (skip if error to avoid blocking)
+                try:
+                    self.duckdb.insert_regime(current_regime.to_dict())
+                except Exception as e:
+                    logger.debug("regime_insert_skipped", error=str(e))
                 
                 # Get current position
                 current_position = current_positions.get(symbol)
@@ -684,41 +758,84 @@ class MarketMaker:
                         signal_id=signal.signal_id,
                     )
                     
-                    # Submit order
+                    # Submit order (always execute in simulation mode)
                     try:
-                        if not self.dry_run:
-                            if hasattr(self.broker, 'submit_limit_order'):
-                                broker_order = self.broker.submit_limit_order(
-                                    symbol=signal.symbol,
-                                    qty=qty,
-                                    side="buy",
-                                    limit_price=signal.entry_price,
-                                    client_order_id=order.client_order_id,
+                        # Use PaperBroker for simulation/dry_run
+                        if hasattr(self.broker, 'submit_limit_order'):
+                            broker_order = self.broker.submit_limit_order(
+                                symbol=signal.symbol,
+                                qty=qty,
+                                side="buy",
+                                limit_price=signal.entry_price,
+                                client_order_id=order.client_order_id,
+                            )
+                            
+                            self.order_manager.mark_submitted(
+                                order.client_order_id,
+                                str(broker_order.get("order_id", order.client_order_id)),
+                            )
+                            
+                            # Mark as filled immediately for paper broker
+                            if broker_order.get("status") == "filled":
+                                self.order_manager.mark_filled(
+                                    order.client_order_id,
+                                    filled_qty=qty,
+                                    filled_price=broker_order.get("filled_price", signal.entry_price),
                                 )
-                                
+                        else:
+                            # Paper broker submit_order method
+                            result = self.broker.submit_order(
+                                symbol=signal.symbol,
+                                side="buy",
+                                qty=qty,
+                                order_type="limit",
+                                limit_price=signal.entry_price,
+                                current_price=signal.entry_price,
+                            )
+                            
+                            if result.get("status") == "filled":
                                 self.order_manager.mark_submitted(
                                     order.client_order_id,
-                                    str(broker_order.id) if hasattr(broker_order, 'id') else str(broker_order.get("order_id", "")),
+                                    str(result.get("order_id", order.client_order_id)),
                                 )
-                            else:
-                                # Paper broker
-                                result = self.broker.submit_order(
-                                    symbol=signal.symbol,
-                                    side="buy",
-                                    qty=qty,
-                                    order_type="limit",
-                                    limit_price=signal.entry_price,
-                                    current_price=signal.entry_price,
+                                self.order_manager.mark_filled(
+                                    order.client_order_id,
+                                    filled_qty=qty,
+                                    filled_price=result.get("filled_price", signal.entry_price),
                                 )
                                 
-                                if result.get("status") == "filled":
-                                    self.order_manager.mark_filled(
-                                        order.client_order_id,
-                                        filled_qty=qty,
-                                        filled_price=result.get("filled_price", signal.entry_price),
-                                    )
-                        else:
-                            logger.info("dry_run_order", order=order.to_dict())
+                                # Update position in Redis
+                                account = self.broker.get_account()
+                                positions = self.broker.get_positions()
+                                
+                                for pos in positions:
+                                    if pos["symbol"] == signal.symbol:
+                                        self.redis.set_position(
+                                            symbol=pos["symbol"],
+                                            qty=pos["qty"],
+                                            avg_price=pos["avg_price"],
+                                            market_value=pos["qty"] * signal.entry_price,
+                                            unrealized_pnl=(signal.entry_price - pos["avg_price"]) * pos["qty"],
+                                            side="long",
+                                        )
+                                
+                                # Update account equity in Redis
+                                self.redis.client.rpush(
+                                    f"{RedisStateStore.STATE_PREFIX}:equity_history",
+                                    account["equity"],
+                                )
+                                self.redis.client.ltrim(
+                                    f"{RedisStateStore.STATE_PREFIX}:equity_history",
+                                    -100,
+                                    -1,
+                                )
+                                
+                                logger.info(
+                                    "order_filled_and_stored",
+                                    symbol=signal.symbol,
+                                    qty=qty,
+                                    price=result.get("filled_price", signal.entry_price),
+                                )
                         
                         self._log_event(EventType.ORDER_SUBMITTED, order.to_dict())
                     
