@@ -1,0 +1,132 @@
+# =============================================================================
+# THE MARKET MAKER - Watchdog Configuration
+# =============================================================================
+# CRITICAL: This file is for the INDEPENDENT watchdog process only.
+# The watchdog runs as a SEPARATE process from the main trading bot.
+# It has its own API credentials and does NOT share state.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Kill Rules (HARDCODED - These are safety limits, not tunable parameters)
+# -----------------------------------------------------------------------------
+# WARNING: Changing these values increases risk of catastrophic loss.
+# These defaults are based on institutional risk management practices.
+# -----------------------------------------------------------------------------
+
+kill_rules:
+  # Maximum daily loss before emergency shutdown
+  # If daily PnL < -5%, liquidate all positions and halt
+  max_daily_loss_pct: -5.0
+  
+  # Maximum single position concentration
+  # If any position > 25% of portfolio, trigger kill
+  max_position_concentration_pct: 25.0
+  
+  # Maximum open orders (runaway detection)
+  # If open orders > 50, something is wrong
+  max_open_orders: 50
+  
+  # Heartbeat timeout
+  # If main bot doesn't heartbeat for 120s, assume dead
+  heartbeat_timeout_seconds: 120
+  
+  # Order rate limit (runaway detection)
+  # If > 20 orders/minute, trigger kill
+  max_orders_per_minute: 20
+  
+  # Zombie order detection (Gemini's recommendation)
+  # If ANY order is OPEN for > 300s, trigger kill
+  # Orders should fill, cancel, or fail - never hang
+  max_order_hang_seconds: 300
+  
+  # Equity hard stop (Gemini's recommendation)
+  # If total equity < 85% of initial, PERMANENT shutdown
+  # This forces human reflection before restart
+  max_drawdown_permanent_pct: 15.0
+
+# -----------------------------------------------------------------------------
+# Shutdown Protocol
+# -----------------------------------------------------------------------------
+shutdown:
+  # Try graceful shutdown (SIGTERM) first
+  graceful_timeout_seconds: 30
+  
+  # Only use SIGKILL if graceful fails
+  use_sigkill_as_fallback: true
+  
+  # Maximum restart attempts before requiring human intervention
+  max_restart_attempts: 3
+  
+  # Cooldown between restart attempts
+  restart_cooldown_seconds: 300  # 5 minutes
+
+# -----------------------------------------------------------------------------
+# API Health Checks
+# -----------------------------------------------------------------------------
+api_health:
+  # Check broker API before making kill decisions
+  # Prevents killing bot due to API latency
+  enabled: true
+  
+  # Maximum acceptable API latency
+  max_latency_seconds: 5.0
+  
+  # If API is slow, defer kill decision
+  defer_on_slow_api: true
+
+# -----------------------------------------------------------------------------
+# Polling Intervals
+# -----------------------------------------------------------------------------
+polling:
+  # How often to check all rules
+  check_interval_seconds: 30
+  
+  # How often to poll broker account
+  account_poll_seconds: 30
+  
+  # How often to check for zombie orders
+  order_check_seconds: 60
+
+# -----------------------------------------------------------------------------
+# Alerting
+# -----------------------------------------------------------------------------
+alerts:
+  # Alert channels (watchdog has its own alert config)
+  channels: ["log"]  # log | slack | email | sms
+  
+  # Critical alerts (kill switch triggered)
+  critical:
+    always_send: true  # Never suppress critical alerts
+  
+  # Warning alerts (approaching limits)
+  warning:
+    daily_loss_warning_pct: -3.0    # Warn at -3%, kill at -5%
+    position_warning_pct: 20.0       # Warn at 20%, kill at 25%
+
+# -----------------------------------------------------------------------------
+# Process Management
+# -----------------------------------------------------------------------------
+process:
+  # PID file location for main bot
+  main_bot_pid_file: "/var/run/market_maker/bot.pid"
+  
+  # Watchdog's own PID file
+  watchdog_pid_file: "/var/run/market_maker/watchdog.pid"
+  
+  # Log file (separate from main bot)
+  log_file: "${LOG_DIR}/watchdog.log"
+
+# -----------------------------------------------------------------------------
+# Emergency Actions
+# -----------------------------------------------------------------------------
+emergency:
+  # On kill trigger:
+  # 1. Cancel all open orders
+  cancel_all_orders: true
+  
+  # 2. Close all positions (market orders)
+  close_all_positions: true
+  
+  # 3. After max drawdown: delete API keys to force cooling off
+  # This is the "nuclear option" - requires generating new keys
+  delete_api_keys_on_max_drawdown: false  # Set true for production

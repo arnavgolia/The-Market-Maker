@@ -1,0 +1,254 @@
+# =============================================================================
+# THE MARKET MAKER - Main Configuration
+# =============================================================================
+# This file contains runtime configuration for the trading bot.
+# Watchdog has its own separate config file (watchdog_settings.yaml)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Environment
+# -----------------------------------------------------------------------------
+environment: "paper"  # paper | live (NEVER set to live without extensive testing)
+log_level: "INFO"
+timezone: "America/New_York"
+
+# -----------------------------------------------------------------------------
+# Data Tiers
+# -----------------------------------------------------------------------------
+data:
+  # Tier 0: Universe Selection (yfinance)
+  # WARNING: Only used for symbol filtering, NEVER for strategy validation
+  tier0:
+    enabled: true
+    min_market_cap_millions: 1000  # $1B minimum
+    min_avg_volume: 500000         # 500K shares/day
+    exclude_otc: true
+    exclude_adr: true
+  
+  # Tier 1: Strategy Validation (Alpaca Historical)
+  tier1:
+    lookback_days: 365
+    bar_timeframe: "1Min"  # 1Min, 5Min, 15Min, 1Hour, 1Day
+  
+  # Tier 2: Spread Modeling (Synthetic)
+  tier2:
+    spread_estimation_method: "volatility_based"
+    spread_floor_bps: 5       # Minimum 5 basis points
+    spread_ceiling_bps: 100   # Maximum 100 basis points
+  
+  # Tier 3: Live Quotes (Alpaca Streaming)
+  tier3:
+    use_streaming: true
+    quote_staleness_ms: 5000  # Reject quotes older than 5 seconds
+
+# -----------------------------------------------------------------------------
+# Storage
+# -----------------------------------------------------------------------------
+storage:
+  # Append-Only Log (high-throughput event capture)
+  append_log:
+    path: "${LOG_DIR}/events.jsonl"
+    max_file_size_mb: 100
+    rotation_count: 10
+  
+  # DuckDB (analytics)
+  duckdb:
+    path: "${DATA_DIR}/market_maker.duckdb"
+    read_only_for_strategies: true
+  
+  # Redis (live state)
+  redis:
+    host: "${REDIS_HOST}"
+    port: 6379
+    db: 0
+    socket_timeout: 5
+    connection_pool_size: 10
+
+# -----------------------------------------------------------------------------
+# ETL Pipeline
+# -----------------------------------------------------------------------------
+etl:
+  # How often to flush append log to DuckDB
+  batch_interval_seconds: 60
+  # Maximum records per batch
+  max_batch_size: 10000
+
+# -----------------------------------------------------------------------------
+# Regime Detection
+# -----------------------------------------------------------------------------
+regime:
+  # Fast volatility (crisis detection)
+  fast:
+    window_days: 3
+    percentile_lookback_days: 60
+  
+  # Slow volatility (trend context)
+  slow:
+    window_days: 20
+    percentile_lookback_days: 252
+  
+  # Crisis override trigger
+  crisis_multiplier: 2.0  # Fast > 2x Slow = CRISIS
+  
+  # Trend strength (ADX)
+  adx:
+    period: 14
+    trending_threshold: 25   # ADX > 25 = trending
+    choppy_threshold: 20     # ADX < 20 = choppy
+
+# -----------------------------------------------------------------------------
+# Strategies
+# -----------------------------------------------------------------------------
+strategies:
+  # Global strategy controls
+  enabled: true
+  max_concurrent_positions: 10
+  
+  # Tier 1: Deterministic
+  tier1:
+    ema_crossover:
+      enabled: true
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
+    
+    rsi_mean_reversion:
+      enabled: true
+      period: 14
+      oversold_threshold: 30
+      overbought_threshold: 70
+    
+    multi_timeframe:
+      enabled: false  # Start with simpler strategies
+      timeframes: ["1Day", "4Hour", "1Hour"]
+  
+  # Tier 2: Sentiment-Enhanced
+  tier2:
+    sentiment_filter:
+      enabled: false  # Enable after calibration validates
+      min_calibration_correlation: 0.15
+      require_validation_pass: true
+  
+  # Tier 3: ML Research (NEVER for production)
+  tier3:
+    enabled: false
+    lstm:
+      enabled: false
+    transformer:
+      enabled: false
+
+# -----------------------------------------------------------------------------
+# Sentiment
+# -----------------------------------------------------------------------------
+sentiment:
+  enabled: true
+  
+  # Sources
+  sources:
+    reddit:
+      enabled: true
+      subreddits: ["wallstreetbets", "stocks", "investing", "options"]
+      scrape_interval_seconds: 300  # 5 minutes
+    
+    twitter:
+      enabled: false  # Enable after API access confirmed
+      keywords: ["$SPY", "$QQQ", "$AAPL"]
+  
+  # Calibration (Bonferroni + Two-Stage)
+  calibration:
+    lookback_days: 90
+    discovery_ratio: 0.6       # 60% for discovery, 40% for validation
+    min_correlation: 0.15
+    lag_range_hours: 24        # Test -24h to +24h
+    validation_alpha: 0.05     # Standard alpha for validation stage
+    recalibrate_interval_days: 30
+  
+  # Decay modeling
+  decay:
+    model: "exponential"
+    default_half_life_hours: 4
+
+# -----------------------------------------------------------------------------
+# Risk Management
+# -----------------------------------------------------------------------------
+risk:
+  # Position sizing
+  position_sizing:
+    method: "volatility_adjusted"  # fixed | volatility_adjusted | kelly
+    max_position_pct: 10.0         # Max 10% of portfolio per position
+    volatility_target_pct: 15.0    # Target 15% annualized vol
+  
+  # Drawdown controls
+  drawdown:
+    max_daily_drawdown_pct: 3.0    # Soft limit: reduce exposure
+    max_total_drawdown_pct: 10.0   # Hard limit: halt trading
+  
+  # Correlation
+  correlation:
+    max_sector_exposure_pct: 30.0
+    correlation_lookback_days: 60
+
+# -----------------------------------------------------------------------------
+# Execution
+# -----------------------------------------------------------------------------
+execution:
+  # Order types
+  default_order_type: "limit"   # limit | market
+  limit_offset_bps: 10          # Place limits 10bps from mid
+  
+  # Timeouts
+  order_timeout_seconds: 30
+  max_retry_attempts: 2
+  
+  # Friday force close (Gemini's recommendation)
+  friday_force_close:
+    enabled: true
+    time: "15:55:00"  # 3:55 PM EST - 5 minutes before close
+  
+  # Reconciliation
+  reconciliation:
+    interval_seconds: 300       # Every 5 minutes
+    on_startup: true
+
+# -----------------------------------------------------------------------------
+# Transaction Costs
+# -----------------------------------------------------------------------------
+transaction_costs:
+  # Base model
+  base_spread_bps: 10
+  base_slippage_bps: 5
+  
+  # Market order penalty
+  market_order_multiplier: 2.0
+  
+  # Stress testing (10x scenario)
+  stress_test:
+    spread_multiplier: 10.0
+    slippage_multiplier: 5.0
+
+# -----------------------------------------------------------------------------
+# Monitoring
+# -----------------------------------------------------------------------------
+monitoring:
+  # Metrics export
+  metrics:
+    enabled: true
+    export_interval_seconds: 60
+  
+  # Alerting
+  alerts:
+    enabled: true
+    channels: ["log"]  # log | slack | email
+    
+    # Alert deduplication (prevent fatigue)
+    deduplication:
+      enabled: true
+      window_seconds: 300       # Same alert within 5 min = suppress
+      max_per_hour: 10          # Same alert > 10/hour = escalate once
+  
+  # Strategy decay detection
+  decay_detection:
+    enabled: true
+    rolling_window_days: 30
+    degradation_threshold: 0.5  # Current Sharpe < 50% of historical = warning
+    disable_threshold_days: 20  # Sharpe < 0 for 20 days = disable

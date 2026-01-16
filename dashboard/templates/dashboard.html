@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Market Maker - Professional Trading Dashboard</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+            background: #0a0e27;
+            color: #e0e0e0;
+            overflow-x: hidden;
+            height: 100vh;
+        }
+
+        /* Top Navigation Bar */
+        .top-bar {
+            background: linear-gradient(135deg, #1a1f3a 0%, #0f1422 100%);
+            border-bottom: 1px solid #2a2f4a;
+            padding: 12px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.4em;
+            font-weight: 700;
+            color: #00d4ff;
+            text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+        }
+
+        .status-indicators {
+            display: flex;
+            gap: 24px;
+            align-items: center;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9em;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.online {
+            background: #00ff88;
+            box-shadow: 0 0 10px rgba(0, 255, 136, 0.6);
+        }
+
+        .status-dot.offline {
+            background: #ff4444;
+            box-shadow: 0 0 10px rgba(255, 68, 68, 0.6);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .live-badge {
+            background: linear-gradient(135deg, #00ff88 0%, #00d4ff 100%);
+            color: #0a0e27;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* Main Container */
+        .container {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            height: calc(100vh - 60px);
+            gap: 0;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: #141829;
+            border-right: 1px solid #2a2f4a;
+            padding: 24px;
+            overflow-y: auto;
+        }
+
+        .sidebar-section {
+            margin-bottom: 32px;
+        }
+
+        .sidebar-section h3 {
+            color: #00d4ff;
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 16px;
+            font-weight: 600;
+        }
+
+        .metric-card {
+            background: linear-gradient(135deg, #1a1f3a 0%, #0f1422 100%);
+            border: 1px solid #2a2f4a;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            transition: all 0.3s;
+        }
+
+        .metric-card:hover {
+            border-color: #00d4ff;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 212, 255, 0.2);
+        }
+
+        .metric-label {
+            color: #8a8fa3;
+            font-size: 0.75em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .metric-value {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: #e0e0e0;
+        }
+
+        .metric-value.positive {
+            color: #00ff88;
+        }
+
+        .metric-value.negative {
+            color: #ff4444;
+        }
+
+        .metric-change {
+            font-size: 0.85em;
+            margin-top: 4px;
+        }
+
+        /* Main Content */
+        .main-content {
+            display: grid;
+            grid-template-rows: auto 1fr;
+            overflow: hidden;
+        }
+
+        /* Equity Chart Section */
+        .chart-section {
+            background: #141829;
+            border-bottom: 1px solid #2a2f4a;
+            padding: 24px;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .chart-title {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #e0e0e0;
+        }
+
+        .chart-controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        .chart-btn {
+            background: #1a1f3a;
+            border: 1px solid #2a2f4a;
+            color: #e0e0e0;
+            padding: 6px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85em;
+            transition: all 0.2s;
+        }
+
+        .chart-btn:hover {
+            background: #00d4ff;
+            color: #0a0e27;
+            border-color: #00d4ff;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 280px;
+            background: #0f1422;
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        /* Grid Layout */
+        .grid-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .panel {
+            background: #141829;
+            border-right: 1px solid #2a2f4a;
+            padding: 24px;
+            overflow-y: auto;
+        }
+
+        .panel:last-child {
+            border-right: none;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #2a2f4a;
+        }
+
+        .panel-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #00d4ff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Positions Table */
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        thead {
+            background: #1a1f3a;
+        }
+
+        th {
+            padding: 12px;
+            text-align: left;
+            font-size: 0.8em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #8a8fa3;
+            font-weight: 600;
+            border-bottom: 1px solid #2a2f4a;
+        }
+
+        td {
+            padding: 16px 12px;
+            border-bottom: 1px solid #1a1f3a;
+            font-size: 0.9em;
+        }
+
+        tr:hover {
+            background: #1a1f3a;
+        }
+
+        .symbol-cell {
+            font-weight: 700;
+            color: #e0e0e0;
+            font-size: 1.05em;
+        }
+
+        .side-badge {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .side-badge.long {
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+            border: 1px solid #00ff88;
+        }
+
+        .side-badge.short {
+            background: rgba(255, 68, 68, 0.2);
+            color: #ff4444;
+            border: 1px solid #ff4444;
+        }
+
+        .pnl-positive {
+            color: #00ff88;
+            font-weight: 700;
+        }
+
+        .pnl-negative {
+            color: #ff4444;
+            font-weight: 700;
+        }
+
+        /* Orders List */
+        .order-item {
+            background: #1a1f3a;
+            border: 1px solid #2a2f4a;
+            border-radius: 6px;
+            padding: 16px;
+            margin-bottom: 12px;
+            transition: all 0.2s;
+        }
+
+        .order-item:hover {
+            border-color: #00d4ff;
+            transform: translateX(4px);
+        }
+
+        .order-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .order-symbol {
+            font-weight: 700;
+            font-size: 1.1em;
+            color: #e0e0e0;
+        }
+
+        .order-status {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .order-status.pending {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            border: 1px solid #ffc107;
+        }
+
+        .order-status.filled {
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+            border: 1px solid #00ff88;
+        }
+
+        .order-status.cancelled {
+            background: rgba(255, 68, 68, 0.2);
+            color: #ff4444;
+            border: 1px solid #ff4444;
+        }
+
+        .order-details {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            font-size: 0.85em;
+            color: #8a8fa3;
+        }
+
+        .order-details strong {
+            color: #e0e0e0;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #8a8fa3;
+        }
+
+        .empty-state i {
+            font-size: 3em;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #0f1422;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #2a2f4a;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #00d4ff;
+        }
+
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #00d4ff;
+        }
+
+        .spinner {
+            border: 3px solid #2a2f4a;
+            border-top: 3px solid #00d4ff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .container {
+                grid-template-columns: 240px 1fr;
+            }
+            .grid-section {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Top Bar -->
+    <div class="top-bar">
+        <div class="logo">
+            <i class="fas fa-chart-line"></i>
+            <span>THE MARKET MAKER</span>
+        </div>
+        <div class="status-indicators">
+            <div class="status-item">
+                <div class="status-dot" id="botStatus"></div>
+                <span>Bot</span>
+            </div>
+            <div class="status-item">
+                <div class="status-dot" id="redisStatus"></div>
+                <span>Redis</span>
+            </div>
+            <div class="status-item">
+                <div class="status-dot" id="alpacaStatus"></div>
+                <span>Alpaca</span>
+            </div>
+            <div class="live-badge">
+                <i class="fas fa-circle"></i> LIVE
+            </div>
+            <div class="status-item">
+                <span id="lastUpdate">--:--:--</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-section">
+                <h3>Portfolio Value</h3>
+                <div class="metric-card">
+                    <div class="metric-label">Total Equity</div>
+                    <div class="metric-value" id="equity">$0.00</div>
+                    <div class="metric-change" id="equityChange">--</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Cash</div>
+                    <div class="metric-value" id="cash">$0.00</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Buying Power</div>
+                    <div class="metric-value" id="buyingPower">$0.00</div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>Performance</h3>
+                <div class="metric-card">
+                    <div class="metric-label">Daily Return</div>
+                    <div class="metric-value" id="dailyReturn">0.00%</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Cumulative Return</div>
+                    <div class="metric-value" id="cumulativeReturn">0.00%</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Positions Value</div>
+                    <div class="metric-value" id="positionsValue">$0.00</div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>Activity</h3>
+                <div class="metric-card">
+                    <div class="metric-label">Active Positions</div>
+                    <div class="metric-value" id="numPositions">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Open Orders</div>
+                    <div class="metric-value" id="numOrders">0</div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>Market Regime</h3>
+                <div class="metric-card">
+                    <div class="metric-label">Trend</div>
+                    <div class="metric-value" id="regimeTrend" style="font-size: 1.2em;">--</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Volatility</div>
+                    <div class="metric-value" id="regimeVolatility" style="font-size: 1.2em;">--</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Equity Chart -->
+            <div class="chart-section">
+                <div class="chart-header">
+                    <div class="chart-title">
+                        <i class="fas fa-chart-area"></i> Portfolio Equity Curve
+                    </div>
+                    <div class="chart-controls">
+                        <button class="chart-btn" onclick="updateChart('1h')">1H</button>
+                        <button class="chart-btn" onclick="updateChart('6h')">6H</button>
+                        <button class="chart-btn" onclick="updateChart('24h')">24H</button>
+                        <button class="chart-btn active" onclick="updateChart('all')">ALL</button>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="equityChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Grid Section -->
+            <div class="grid-section">
+                <!-- Positions Panel -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="panel-title">
+                            <i class="fas fa-briefcase"></i> Open Positions
+                        </div>
+                        <span style="color: #8a8fa3; font-size: 0.85em;" id="positionsCount">0 positions</span>
+                    </div>
+                    <div class="table-container" id="positionsTable">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            Loading positions...
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Orders Panel -->
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="panel-title">
+                            <i class="fas fa-list"></i> Recent Orders
+                        </div>
+                        <span style="color: #8a8fa3; font-size: 0.85em;" id="ordersCount">0 orders</span>
+                    </div>
+                    <div id="ordersList">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            Loading orders...
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        // Initialize Socket.IO
+        const socket = io();
+        
+        // Chart
+        let equityChart = null;
+        let equityData = {
+            labels: [],
+            values: []
+        };
+
+        // Format currency
+        function formatCurrency(value) {
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD',
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }).format(value);
+        }
+
+        // Format percentage
+        function formatPercent(value) {
+            const sign = value >= 0 ? '+' : '';
+            return `${sign}${value.toFixed(2)}%`;
+        }
+
+        // Initialize chart
+        function initChart() {
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            equityChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: equityData.labels,
+                    datasets: [{
+                        label: 'Equity',
+                        data: equityData.values,
+                        borderColor: '#00d4ff',
+                        backgroundColor: 'rgba(0, 212, 255, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        pointHoverRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            backgroundColor: '#1a1f3a',
+                            borderColor: '#00d4ff',
+                            borderWidth: 1,
+                            titleColor: '#e0e0e0',
+                            bodyColor: '#e0e0e0',
+                            callbacks: {
+                                label: function(context) {
+                                    return 'Equity: ' + formatCurrency(context.parsed.y);
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: {
+                                color: '#1a1f3a',
+                                borderColor: '#2a2f4a'
+                            },
+                            ticks: {
+                                color: '#8a8fa3',
+                                font: {
+                                    size: 11
+                                }
+                            }
+                        },
+                        y: {
+                            grid: {
+                                color: '#1a1f3a',
+                                borderColor: '#2a2f4a'
+                            },
+                            ticks: {
+                                color: '#8a8fa3',
+                                font: {
+                                    size: 11
+                                },
+                                callback: function(value) {
+                                    return '$' + value.toLocaleString();
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update chart
+        function updateChart(period) {
+            // Update active button
+            document.querySelectorAll('.chart-btn').forEach(btn => btn.classList.remove('active'));
+            event?.target?.classList.add('active');
+            
+            // Filter data based on period
+            // For now, just show all data
+            if (equityChart) {
+                equityChart.update();
+            }
+        }
+
+        // Update status indicators
+        function updateStatus(data) {
+            const botStatus = document.getElementById('botStatus');
+            const redisStatus = document.getElementById('redisStatus');
+            const alpacaStatus = document.getElementById('alpacaStatus');
+
+            botStatus.className = 'status-dot ' + (data.bot_running ? 'online' : 'offline');
+            redisStatus.className = 'status-dot ' + (data.redis_connected ? 'online' : 'offline');
+            alpacaStatus.className = 'status-dot ' + (data.alpaca_connected ? 'online' : 'offline');
+        }
+
+        // Update account info
+        function updateAccount(data) {
+            if (data.equity !== undefined) {
+                const equityEl = document.getElementById('equity');
+                const oldValue = parseFloat(equityEl.textContent.replace(/[^0-9.-]/g, '')) || 0;
+                equityEl.textContent = formatCurrency(data.equity);
+                
+                const change = data.equity - oldValue;
+                const changeEl = document.getElementById('equityChange');
+                if (oldValue > 0) {
+                    changeEl.textContent = formatPercent((change / oldValue) * 100);
+                    changeEl.className = 'metric-change ' + (change >= 0 ? 'positive' : 'negative');
+                }
+                
+                // Update chart
+                const now = new Date();
+                equityData.labels.push(now.toLocaleTimeString());
+                equityData.values.push(data.equity);
+                
+                // Keep only last 100 points
+                if (equityData.labels.length > 100) {
+                    equityData.labels.shift();
+                    equityData.values.shift();
+                }
+                
+                if (equityChart) {
+                    equityChart.update('none');
+                }
+            }
+            if (data.cash !== undefined) {
+                document.getElementById('cash').textContent = formatCurrency(data.cash);
+            }
+            if (data.buying_power !== undefined) {
+                document.getElementById('buyingPower').textContent = formatCurrency(data.buying_power);
+            }
+        }
+
+        // Update metrics
+        function updateMetrics(data) {
+            if (data.daily_return_pct !== undefined) {
+                const el = document.getElementById('dailyReturn');
+                el.textContent = formatPercent(data.daily_return_pct);
+                el.className = 'metric-value ' + (data.daily_return_pct >= 0 ? 'positive' : 'negative');
+            }
+            if (data.cumulative_return_pct !== undefined) {
+                const el = document.getElementById('cumulativeReturn');
+                el.textContent = formatPercent(data.cumulative_return_pct);
+                el.className = 'metric-value ' + (data.cumulative_return_pct >= 0 ? 'positive' : 'negative');
+            }
+            if (data.positions_value !== undefined) {
+                document.getElementById('positionsValue').textContent = formatCurrency(data.positions_value);
+            }
+            if (data.num_positions !== undefined) {
+                document.getElementById('numPositions').textContent = data.num_positions;
+            }
+        }
+
+        // Update positions table
+        function updatePositions(positions) {
+            const container = document.getElementById('positionsTable');
+            
+            if (!positions || positions.length === 0) {
+                container.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><div>No open positions</div></div>';
+                document.getElementById('positionsCount').textContent = '0 positions';
+                return;
+            }
+
+            document.getElementById('positionsCount').textContent = `${positions.length} position${positions.length !== 1 ? 's' : ''}`;
+
+            let html = '<table><thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg Price</th><th>Market Value</th><th>P&L</th></tr></thead><tbody>';
+            
+            positions.forEach(pos => {
+                const side = pos.side || 'long';
+                const pnl = pos.unrealized_pnl || 0;
+                const pnlClass = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+                
+                html += `
+                    <tr>
+                        <td class="symbol-cell">${pos.symbol}</td>
+                        <td><span class="side-badge ${side}">${side.toUpperCase()}</span></td>
+                        <td>${pos.qty || 0}</td>
+                        <td>${formatCurrency(pos.avg_price || 0)}</td>
+                        <td>${formatCurrency(pos.market_value || 0)}</td>
+                        <td class="${pnlClass}">${formatCurrency(pnl)}</td>
+                    </tr>
+                `;
+            });
+            
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        // Update orders
+        function updateOrders(orders) {
+            const container = document.getElementById('ordersList');
+            
+            if (!orders || orders.length === 0) {
+                container.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><div>No recent orders</div></div>';
+                document.getElementById('ordersCount').textContent = '0 orders';
+                return;
+            }
+
+            document.getElementById('ordersCount').textContent = `${orders.length} order${orders.length !== 1 ? 's' : ''}`;
+            document.getElementById('numOrders').textContent = orders.length;
+
+            container.innerHTML = orders.map(order => {
+                const status = (order.status || 'pending').toLowerCase();
+                const side = (order.side || 'buy').toUpperCase();
+                const created = order.created_at ? new Date(order.created_at).toLocaleString() : '--';
+                const price = order.filled_price || order.limit_price || 0;
+                
+                return `
+                    <div class="order-item">
+                        <div class="order-header">
+                            <div class="order-symbol">${order.symbol || 'N/A'}</div>
+                            <span class="order-status ${status}">${status.toUpperCase()}</span>
+                        </div>
+                        <div class="order-details">
+                            <div><strong>Side:</strong> ${side}</div>
+                            <div><strong>Qty:</strong> ${order.qty || 0}</div>
+                            <div><strong>Price:</strong> ${formatCurrency(price)}</div>
+                            <div><strong>Time:</strong> ${created}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Update regime
+        function updateRegime(data) {
+            if (data.trend) {
+                document.getElementById('regimeTrend').textContent = data.trend.toUpperCase();
+            }
+            if (data.volatility) {
+                document.getElementById('regimeVolatility').textContent = data.volatility.toUpperCase();
+            }
+        }
+
+        // Fetch all data
+        async function fetchAllData() {
+            try {
+                // Status
+                const statusRes = await fetch('/api/status');
+                const status = await statusRes.json();
+                updateStatus(status);
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+
+                // Account
+                try {
+                    const accountRes = await fetch('/api/account');
+                    if (accountRes.ok) {
+                        const account = await accountRes.json();
+                        updateAccount(account);
+                    }
+                } catch (e) {
+                    console.error('Account fetch error:', e);
+                }
+
+                // Metrics
+                try {
+                    const metricsRes = await fetch('/api/metrics');
+                    if (metricsRes.ok) {
+                        const metrics = await metricsRes.json();
+                        updateMetrics(metrics);
+                    }
+                } catch (e) {
+                    console.error('Metrics fetch error:', e);
+                }
+
+                // Positions
+                try {
+                    const positionsRes = await fetch('/api/positions');
+                    if (positionsRes.ok) {
+                        const data = await positionsRes.json();
+                        updatePositions(data.positions || []);
+                    }
+                } catch (e) {
+                    console.error('Positions fetch error:', e);
+                }
+
+                // Orders
+                try {
+                    const ordersRes = await fetch('/api/orders');
+                    if (ordersRes.ok) {
+                        const data = await ordersRes.json();
+                        updateOrders(data.orders || []);
+                    }
+                } catch (e) {
+                    console.error('Orders fetch error:', e);
+                }
+
+                // Regime
+                try {
+                    const regimeRes = await fetch('/api/regime');
+                    if (regimeRes.ok) {
+                        const regime = await regimeRes.json();
+                        updateRegime(regime);
+                    }
+                } catch (e) {
+                    console.error('Regime fetch error:', e);
+                }
+            } catch (error) {
+                console.error('Fetch error:', error);
+            }
+        }
+
+        // Socket.IO event handlers
+        socket.on('connect', () => {
+            console.log('Connected to dashboard server');
+            initChart();
+            fetchAllData();
+        });
+
+        socket.on('update', (data) => {
+            if (data.account) {
+                updateAccount(data.account);
+            }
+            if (data.positions) {
+                updatePositions(data.positions);
+            }
+            document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+        });
+
+        socket.on('status', (data) => {
+            console.log('Status:', data.message);
+        });
+
+        // Initial fetch and periodic updates
+        fetchAllData();
+        setInterval(fetchAllData, 2000); // Update every 2 seconds
+    </script>
+</body>
+</html>
